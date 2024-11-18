@@ -65,7 +65,7 @@ module Gatherer
       puts "Page #{page_num} of #{(total_results / per_page.to_f).ceil} (#{results_count_of_this_query} results)"
 
       result['results'].each do |observation|
-        if @last_id.nil? || ['id'].to_i > @last_id && observation['id'].to_i < @last_id * 10
+        if @last_id.nil? || (observation['id'].to_i > @last_id && observation['id'].to_i < @last_id * 10)
           @last_id = observation['id']
         end
         puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
