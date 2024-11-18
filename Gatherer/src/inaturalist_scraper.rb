@@ -4,27 +4,95 @@ require 'net/http'
 require 'uri'
 require 'json'
 
+def filter_anomalies(numbers, factor: 10)
+  filtered = [numbers.first] # Start with the first number
+  last_added = numbers.first
+  numbers.each_cons(2) do |prev, curr|
+    # Add the current number only if it's within the acceptable range
+    if curr > prev && curr <= prev * factor && curr <= last_added * factor
+      filtered << curr
+      last_added = curr
+    end
+  end
+  filtered
+end
+
 module Gatherer
   class INaturalistScraper < Scraper
     def initialize
+      @current_page = 1
+      @source_file = './data/inaturalist.json'
+
+      # make file if it doesnt exist
+      File.open(@source_file, 'w') {} unless File.exist?(@source_file)
+
+      # read file to get the last id
+      return unless File.exist?(@source_file)
+
+      begin
+        @last_id = filter_anomalies(File.read(@source_file).split("\n").map do |line|
+          JSON.parse(line)['id'].to_i
+        end).max
+      rescue JSON::ParserError
+        @last_id = 1
+      end
+
+      puts @last_id
+    end
+
+    def scrape_all_pages
+      keep_going = false
+
+      until keep_going
+        keep_going = analyze(single_paged_scrape)
+
+        # random sleep to avoid rate limiting
+        sleep(rand(1..20))
+      end
+    end
+
+    def analyze(result)
+      total_results = result['total_results']
+
+      results_count_of_this_query = result['results'].length
+      page_num = result['page']
+      per_page = result['per_page']
+
+      puts "Page #{page_num} of #{(total_results / per_page.to_f).ceil} (#{results_count_of_this_query} results)"
+
+      @current_page += 1
+
+      result['results'].each do |observation|
+        puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
+
+        # append to file
+        File.open(@source_file, 'a') { |f| f.puts observation.to_json }
+      end
+
+      results_count_of_this_query < per_page
+    end
+
+    # Given zero to many of following parameters, returns observations matching the search criteria.
+    # The large size of the observations index prevents us from supporting the page parameter when
+    # retrieving records from large result sets. If you need to retrieve large numbers of records, use
+    # the per_page and id_above or id_below parameters instead.
+    def single_paged_scrape
       params = {
         captive: 'false',
         verifiable: 'true',
         taxon_id: '85553',
         iconic_taxa: 'Reptilia',
-        per_page: '2',
-        order: 'desc',
-        order_by: 'created_at'
+        per_page: '200',
+        order: 'asc',
+        order_by: 'created_at',
+        id_above: @last_id,
+        page: @current_page
       }
 
       uri = URI('https://api.inaturalist.org/v1/observations')
 
       uri.query = URI.encode_www_form(params)
 
-      @uri = uri
-    end
-
-    def single_paged_scrape
       # Create the HTTP request
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = true
@@ -35,16 +103,11 @@ module Gatherer
       response = http.request(request)
 
       # Parse the response (if JSON)
-      if response.is_a?(Net::HTTPSuccess)
-        data = JSON.parse(response.body)
-        puts data
-      else
-        puts "Error: #{response.code} #{response.message}"
-      end
+      return JSON.parse(response.body) if response.is_a?(Net::HTTPSuccess)
+
+      raise "Error: #{response.code} #{response.message}"
     end
-
-    private
-
-    attr_accessor :uri
   end
 end
+
+Gatherer::INaturalistScraper.new.scrape_all_pages
