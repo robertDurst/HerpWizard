@@ -68,7 +68,7 @@ module Gatherer
         if @last_id.nil? || (observation['id'].to_i > @last_id && observation['id'].to_i < @last_id * 10)
           @last_id = observation['id']
         end
-        puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
+        # puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
 
         # append to file
         File.open(@source_file, 'a') { |f| f.puts observation.to_json }
