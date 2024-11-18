@@ -20,7 +20,6 @@ end
 module Gatherer
   class INaturalistScraper < Scraper
     def initialize
-      @current_page = 1
       @source_file = './data/inaturalist.json'
 
       # make file if it doesnt exist
@@ -44,10 +43,15 @@ module Gatherer
       keep_going = false
 
       until keep_going
-        keep_going = analyze(single_paged_scrape)
-
         # random sleep to avoid rate limiting
-        sleep(rand(1..20))
+        sleep(rand(5..30))
+        begin
+          puts "Scraping with last_id #{@last_id}"
+          keep_going = analyze(single_paged_scrape)
+        rescue StandardError => e
+          puts e
+          puts 'failed, trying again'
+        end
       end
     end
 
@@ -60,9 +64,8 @@ module Gatherer
 
       puts "Page #{page_num} of #{(total_results / per_page.to_f).ceil} (#{results_count_of_this_query} results)"
 
-      @current_page += 1
-
       result['results'].each do |observation|
+        @last_id = observation['id'] if observation['id'].to_i > @last_id && observation['id'].to_i < @last_id * 10
         puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
 
         # append to file
@@ -86,7 +89,7 @@ module Gatherer
         order: 'asc',
         order_by: 'created_at',
         id_above: @last_id,
-        page: @current_page
+        page: 1
       }
 
       uri = URI('https://api.inaturalist.org/v1/observations')
