@@ -4,17 +4,64 @@ require 'net/http'
 require 'uri'
 require 'json'
 
-def filter_anomalies(numbers, factor: 10)
-  filtered = [numbers.first] # Start with the first number
-  last_added = numbers.first
-  numbers.each_cons(2) do |prev, curr|
-    # Add the current number only if it's within the acceptable range
-    if curr > prev && curr <= prev * factor && curr <= last_added * factor
-      filtered << curr
-      last_added = curr
+# we assume that we will never go 50 pages before finding next starting point
+# a series of observations is one where
+#
+# StartPoint: the last end_point
+# All Eligible Start Points
+# All Ineligible Start Points
+# EndPoint: the starting_point of the next series
+# How many pages of data represented by the series
+
+module Helper
+  # assumes we start in a good state
+  def self.filter(ids)
+    copy_of_ids = ids.dup
+    i = 0
+
+    final = {}
+    while i < ids.length - 1
+      before = ids[i]
+      after = ids[i + 1]
+      if (before * 10) < after
+        ids.delete_at(i + 1)
+        final[after] = false
+      elsif before > after
+        ids.delete_at(i)
+        final[before] = false
+      else
+        i += 1
+        final[before] = true
+      end
     end
+
+    final[ids[-1]] = true
+
+    final_actual = []
+
+    copy_of_ids.each_with_index.map do |id, _i|
+      final_actual << { ok: final[id], value: id }
+    end
+
+    final_actual
   end
-  filtered
+
+  def self.decipher(final_list)
+    eligible = []
+    ineligible = []
+
+    final_list.each do |item|
+      if item[:ok]
+        ineligible.each { |i| eligible << i }
+        ineligible = []
+        eligible << item[:value]
+      else
+        ineligible << item[:value]
+      end
+    end
+
+    [eligible, eligible.pop]
+  end
 end
 
 module Gatherer
@@ -22,66 +69,62 @@ module Gatherer
     def initialize
       @source_file = './data/inaturalist.json'
 
+      # make directory if it doesnt exist
+      Dir.mkdir('./data') unless Dir.exist?('./data')
       # make file if it doesnt exist
-      File.open(@source_file, 'w') {} unless File.exist?(@source_file)
-
-      # read file to get the last id
-      return unless File.exist?(@source_file)
-
-      begin
-        @last_id = filter_anomalies(File.read(@source_file).split("\n").map do |line|
-          JSON.parse(line)['id'].to_i
-        end).max
-      rescue JSON::ParserError
-        @last_id = 1
-      end
-
-      puts @last_id
+      File.open(@source_file, 'w') unless File.exist?(@source_file)
+      @total = 0
     end
 
     def scrape_all_pages
-      keep_going = false
+      start = 0
+      page = 1
 
-      until keep_going
-        # random sleep to avoid rate limiting
-        sleep(rand(5..30))
-        begin
-          puts "Scraping with last_id #{@last_id}"
-          keep_going = analyze(single_paged_scrape)
-        rescue StandardError => e
-          puts e
-          puts 'failed, trying again'
+      while true
+        page = 1
+
+        puts "[#{Time.now}]: Starting at #{start} on page #{page} with #{@total} total observations"
+
+        rand_sleep = rand(1..15)
+        sleep(rand_sleep)
+        puts "[#{Time.now}]: Querying #{start} on page #{page} after sleeping for #{rand_sleep} seconds"
+        top = analyze_page(start, page)
+        while top == start
+          puts "[#{Time.now}]: No new data found, moving to next page: #{page}"
+
+          rand_sleep = rand(1..15)
+          sleep(rand_sleep)
+          puts "[#{Time.now}]: Querying #{start} on page #{page} after sleeping for #{rand_sleep} seconds"
+
+          page += 1
+          top = analyze_page(start, page)
         end
+
+        start = top
       end
     end
 
-    def analyze(result)
-      total_results = result['total_results']
+    def analyze_page(start, page)
+      one_page = Gatherer::INaturalistScraper.new.single_paged_scrape(start, page)
+      filtered = Helper.filter((start == 0 ? [] : [start]) + one_page['results'].map do |observation|
+        observation['id'].to_i
+      end)
+      _, top = Helper.decipher(filtered)
 
-      results_count_of_this_query = result['results'].length
-      page_num = result['page']
-      per_page = result['per_page']
-
-      puts "Page #{page_num} of #{(total_results / per_page.to_f).ceil} (#{results_count_of_this_query} results)"
-
-      result['results'].each do |observation|
-        if @last_id.nil? || (observation['id'].to_i > @last_id && observation['id'].to_i < @last_id * 10)
-          @last_id = observation['id']
+      File.open(@source_file, 'a') do |f|
+        one_page['results'].each do |observation|
+          f.puts observation.to_json
+          @total += 1
         end
-        # puts "ID: #{observation['id']} | Created at: #{observation['created_at']}"
-
-        # append to file
-        File.open(@source_file, 'a') { |f| f.puts observation.to_json }
       end
-
-      results_count_of_this_query < per_page
+      top
     end
 
     # Given zero to many of following parameters, returns observations matching the search criteria.
     # The large size of the observations index prevents us from supporting the page parameter when
     # retrieving records from large result sets. If you need to retrieve large numbers of records, use
     # the per_page and id_above or id_below parameters instead.
-    def single_paged_scrape
+    def single_paged_scrape(last_id, page)
       params = {
         captive: 'false',
         verifiable: 'true',
@@ -90,8 +133,8 @@ module Gatherer
         per_page: '200',
         order: 'asc',
         order_by: 'created_at',
-        id_above: @last_id,
-        page: 1
+        id_above: last_id,
+        page: page
       }
 
       uri = URI('https://api.inaturalist.org/v1/observations')
@@ -115,4 +158,6 @@ module Gatherer
   end
 end
 
-Gatherer::INaturalistScraper.new.scrape_all_pages
+gatherer = Gatherer::INaturalistScraper.new
+
+gatherer.scrape_all_pages
