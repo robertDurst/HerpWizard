@@ -25,7 +25,7 @@ module Gatherer
       page_results = 50
 
       while page_results == 50
-        sleep(rand(1..20))
+        sleep(rand(1..10))
         page_results = 0
         uri = URI("#{BASE_URL}/viewforum.php?f=2&start=#{50 * page}")
         puts "[#{Time.now}] Scraping page #{page}. Thus far, #{num_results} results."
@@ -68,7 +68,7 @@ module Gatherer
           puts "Error: #{response.code} #{response.message}"
         end
 
-        page + 1
+        page += 1
       end
     end
 
@@ -79,7 +79,7 @@ module Gatherer
       all_comments_for_page = []
       while page_results == 50
         page_results = 0
-        sleep(rand(1..20))
+        sleep(rand(1..10))
         results = foobar(link, page)
         results.each do |result|
           num_results += 1
