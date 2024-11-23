@@ -9,40 +9,91 @@ module Gatherer
   class FieldHerpForumScraper < Scraper
     BASE_URL = 'https://www.fieldherpforum.com/forum/'
 
-    def initialize; end
+    def initialize
+      @source_file = './data/field_herp_forum.json'
+
+      # make directory if it doesnt exist
+      Dir.mkdir('./data') unless Dir.exist?('./data')
+      # make file if it doesnt exist
+      File.open(@source_file, 'w') unless File.exist?(@source_file)
+      @total = 0
+    end
 
     def scrape_all
-      uri = URI("#{BASE_URL}/viewforum.php?f=2")
+      num_results = 0
+      page = 0
+      page_results = 50
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = true
-      request = Net::HTTP::Get.new(uri)
+      while page_results == 50
+        sleep(rand(1..20))
+        page_results = 0
+        uri = URI("#{BASE_URL}/viewforum.php?f=2&start=#{50 * page}")
+        puts "[#{Time.now}] Scraping page #{page}. Thus far, #{num_results} results."
+        page_results = 0
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.use_ssl = true
+        request = Net::HTTP::Get.new(uri)
 
-      response = http.request(request)
+        response = http.request(request)
 
-      if response.is_a?(Net::HTTPSuccess)
-        doc = Nokogiri::HTML(response.body)
+        if response.is_a?(Net::HTTPSuccess)
+          doc = Nokogiri::HTML(response.body)
 
-        doc.css('.topics').css('li').each do |topic|
-          title = topic.css('.topictitle').text
-          link = topic.css('.topictitle')[0]['href'].split('viewtopic.php?')[1]
+          doc.css('.topics').css('li').each do |topic|
+            title = topic.css('.topictitle')&.text
+            link = topic.css('.topictitle')[0] ? topic.css('.topictitle')[0]['href']&.split('viewtopic.php?')&.[](1) : nil
 
-          puts "\n"
-          puts "=============== Title: #{title} ==============="
-          puts "Link: #{link}"
+            next if link.nil? || title.nil? || title.empty?
 
-          single_paged_scrape(link)
+            # on the first page, the first topic is 'How to Register'
+            next if title.include? 'How to Register'
 
-          puts "=============== End of #{title} ==============="
+            num_results += 1
+            page_results += 1
+
+            puts "\t[#{num_results}] Title: #{title} ==============="
+
+            comments = single_paged_scrape(link)
+
+            File.open(@source_file, 'a') do |f|
+              f.puts({
+                title: title,
+                link: link,
+                comments: comments
+              }.to_json)
+            end
+          end
+
+        else
+          puts "Error: #{response.code} #{response.message}"
         end
 
-      else
-        puts "Error: #{response.code} #{response.message}"
+        page + 1
       end
     end
 
     def single_paged_scrape(link)
-      uri = URI("#{BASE_URL}/viewtopic.php?#{link}")
+      num_results = 0
+      page_results = 50
+      page = 0
+      all_comments_for_page = []
+      while page_results == 50
+        page_results = 0
+        sleep(rand(1..20))
+        results = foobar(link, page)
+        results.each do |result|
+          num_results += 1
+          page_results += 1
+          all_comments_for_page << result
+        end
+
+        page += 1
+      end
+      all_comments_for_page
+    end
+
+    def foobar(link, page)
+      uri = URI("#{BASE_URL}/viewtopic.php?#{link}&start=#{page * 50}")
 
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = true
@@ -55,13 +106,12 @@ module Gatherer
 
         posts = doc.css('.post')
 
-        posts.each do |post|
-          content = post.css('.postbody').css('.content').text
-          author = post.css('.author').css('.username').text
-          time = post.css('.author').css('time').text
-          puts "Author: #{author}"
-          puts "Time: #{time}"
-          puts "Content: #{content}"
+        posts.map do |post|
+          {
+            content: post.css('.postbody').css('.content').text,
+            author: post.css('.author').css('.username').text,
+            time: post.css('.author').css('time').text
+          }
         end
 
       else
@@ -70,3 +120,8 @@ module Gatherer
     end
   end
 end
+
+# https://www.fieldherpforum.com/forum/viewtopic.php?t=5074
+# Gatherer::FieldHerpForumScraper.new.single_paged_scrape('t=5074')
+
+Gatherer::FieldHerpForumScraper.new.scrape_all
