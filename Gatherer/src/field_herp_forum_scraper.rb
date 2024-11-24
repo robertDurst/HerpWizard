@@ -77,6 +77,7 @@ module Gatherer
       page_results = 50
       page = 0
       all_comments_for_page = []
+      last_first_result = ''
       while page_results == 50
         page_results = 0
         sleep(rand(1..10))
@@ -88,6 +89,10 @@ module Gatherer
         end
 
         page += 1
+        last_first_result_new = "#{results.to_json}"
+        break if last_first_result == last_first_result_new
+
+        last_first_result = last_first_result_new
       end
       all_comments_for_page
     end
